@@ -275,6 +275,8 @@ class ConnectionExecutor:
             arrow_not_supported = (
                 "does not support Apache Arrow",
                 "Apache Arrow format is not supported",
+                "pyarrow is required for Arrow",
+                "has no attribute 'arrow",
             )
             if not any(e in str(err) for e in arrow_not_supported):
                 raise
@@ -450,6 +452,11 @@ class ConnectionExecutor:
         """Normalise a connection object such that we have the query executor."""
         if self.driver_name == "sqlalchemy":
             if self._is_alchemy_session(conn):
+                if (
+                    getattr(getattr(conn, "bind", None), "driver", None)
+                    == "mssqlpython"
+                ):
+                    self.driver_name = "mssql_python"
                 return conn
             else:
                 # where possible, use the raw connection to access arrow integration
@@ -459,7 +466,10 @@ class ConnectionExecutor:
                 elif conn.engine.driver == "duckdb_engine":
                     self.driver_name = "duckdb"
                     return conn
-                elif self._is_alchemy_engine(conn):
+                elif conn.engine.driver == "mssqlpython":
+                    self.driver_name = "mssql_python"
+
+                if self._is_alchemy_engine(conn):
                     # note: if we create it, we can close it
                     self.can_close_cursor = True
                     return conn.connect()
@@ -627,7 +637,9 @@ class ConnectionExecutor:
 
         # note: some cursors execute in-place, some access results via a property
         result = self.cursor if (result is None or result is True) else result
-        if self.driver_name == "duckdb" and self._is_alchemy_result(result):
+        if self.driver_name in ("duckdb", "mssql_python") and self._is_alchemy_result(
+            result
+        ):
             result = result.cursor  # type: ignore[union-attr]
 
         self.result = result

@@ -74,6 +74,15 @@ ARROW_DRIVER_REGISTRY: Final[dict[str, list[ArrowDriverProperties]]] = {
             "minimum_version": None,
         },
     ],
+    "mssql_python": [
+        {
+            "fetch_all": "arrow",
+            "fetch_batches": "arrow_reader",
+            "exact_batch_size": True,
+            "repeat_batch_calls": False,
+            "minimum_version": None,
+        }
+    ],
     "oracledb_proxy": [
         {
             "fetch_all": "fetch_df_all",

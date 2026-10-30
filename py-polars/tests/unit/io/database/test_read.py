@@ -91,7 +91,7 @@ class MockCursor:
         self.n_calls = 1
 
     def __getattr__(self, name: str) -> Any:
-        if "fetch" in name:
+        if "fetch" in name or "arrow" in name:
             self.called.append(name)
             return self.resultset
         super().__getattr__(name)  # type: ignore[misc]
@@ -890,6 +890,9 @@ def test_read_database_uri_parameterised_multiple(
         ("turbodbc", None, False, "fetchallarrow"),
         ("turbodbc", 50_000, False, "fetchallarrow"),
         ("turbodbc", 50_000, True, "fetcharrowbatches"),
+        ("mssql_python", None, False, "arrow"),
+        ("mssql_python", 10_000, False, "arrow"),
+        ("mssql_python", 10_000, True, "arrow_reader"),
         pytest.param(
             "adbc_driver_postgresql",
             None,
@@ -962,6 +965,8 @@ def test_read_database_mocked(
         ("snowflake", 10_000, True),
         ("databricks", None, False),
         ("databricks", 25_000, True),
+        ("mssql_python", None, False),
+        ("mssql_python", 10_000, True),
     ],
 )
 def test_read_database_mocked_schema_overrides(
@@ -996,6 +1001,64 @@ def test_read_database_mocked_schema_overrides(
     res = cast("pl.DataFrame", res)
     assert res.schema == pl.Schema({"x": pl.UInt8, "y": pl.String})
     assert res.rows() == [(1, "aa"), (2, "bb"), (3, "cc")]
+
+
+def test_read_database_mssql_python_sqlalchemy() -> None:
+    arrow_table = pa.table({"x": [1, 2, 3], "y": ["aa", "bb", "cc"]})
+    called: list[Any] = []
+
+    class MockMssqlPythonCursor(sqlite3.Cursor):
+        def arrow(self) -> pa.Table:
+            called.append("arrow")
+            return arrow_table
+
+        def arrow_reader(self, batch_size: int = 8192) -> pa.RecordBatchReader:
+            called.append(("arrow_reader", batch_size))
+            return pa.RecordBatchReader.from_batches(
+                arrow_table.schema,
+                arrow_table.to_batches(max_chunksize=batch_size),
+            )
+
+    class MockMssqlPythonConnection(sqlite3.Connection):
+        def cursor(self, factory: Any = MockMssqlPythonCursor) -> Any:
+            return super().cursor(factory)
+
+    engine = create_sqlite_engine(
+        "sqlite://", connect_args={"factory": MockMssqlPythonConnection}
+    )
+    engine.dialect.driver = "mssqlpython"
+
+    expected = pl.DataFrame({"x": [1, 2, 3], "y": ["aa", "bb", "cc"]})
+    with engine.connect() as conn, sessionmaker(engine)() as session:
+        for connection in (engine, conn, session):
+            called.clear()
+            df = pl.read_database("SELECT 1", connection=connection)
+            assert called == ["arrow"]
+            assert_frame_equal(df, expected)
+
+            called.clear()
+            batches = list(
+                pl.read_database(
+                    "SELECT 1",
+                    connection=connection,
+                    iter_batches=True,
+                    batch_size=2,
+                )
+            )
+            assert called == [("arrow_reader", 2)]
+            assert [len(b) for b in batches] == [2, 1]
+            assert_frame_equal(pl.concat(batches), expected)
+
+    # verify fallback to row-wise fetch when `mssql_python < 1.5.0` (no `arrow` method)
+    fallback_engine = create_sqlite_engine("sqlite://")
+    fallback_engine.dialect.driver = "mssqlpython"
+    with (
+        fallback_engine.connect() as conn,
+        sessionmaker(fallback_engine)() as session,
+    ):
+        for connection in (fallback_engine, conn, session):
+            df = pl.read_database("SELECT 1 AS x, 'aa' AS y", connection=connection)
+            assert_frame_equal(df, pl.DataFrame({"x": [1], "y": ["aa"]}))
 
 
 class MockOracleConnection:
