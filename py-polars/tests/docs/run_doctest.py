@@ -115,9 +115,24 @@ if __name__ == "__main__":
 
     # Set doctests to fail on warnings
     warnings.simplefilter("error", Warning)
-    # TODO: Remove in 2.0.
     warnings.filterwarnings(
         "ignore",
+        message="datetime.datetime.utcfromtimestamp\\(\\) is deprecated.*",
+        category=DeprecationWarning,
+    )
+    warnings.filterwarnings(
+        "ignore",
+        message="datetime.datetime.utcnow\\(\\) is deprecated.*",
+        category=DeprecationWarning,
+    )
+    warnings.filterwarnings(
+        "ignore",
+        message=r"`cut` is deprecated",
+        category=DeprecationWarning,
+    )
+    warnings.filterwarnings(
+        "ignore",
+        message=r"`qcut` is deprecated",
         category=DeprecationWarning,
     )
 
